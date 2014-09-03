@@ -1,24 +1,15 @@
 ﻿open System.IO
+open System.Collections.Generic
 open System.Text.RegularExpressions
 
-let pair a b = a, b
-let zipi = Seq.mapi pair
+(* Types. *)
 
-let reportUsage () =
-    fprintfn stderr "Usage: fasten [-f <file pattern>] <directory>..."
-    exit 1
-
-let reportError exception_ message =
-    fprintfn stderr "Error: %s\n%s" (exception_.ToString ()) message
-    exit 1
-
-let reportDirectoryNotFound name =
-    fprintfn stderr "Directory not found: %s" name
-    exit 1
-
-let reportInvalidFlag flag expected =
-    fprintfn stderr "Invalid flag %s; expected %s" flag expected
-    exit 1
+type FilePath = string
+type DirectoryPath = string
+type Line = int
+type Column = int
+type Length = int
+type Value = int64
 
 [<NoComparison>]
 type CommandLineOptions = {
@@ -26,43 +17,112 @@ type CommandLineOptions = {
     fastenableRegex : Regex;
 }
 
-let defaultOptions = {
-    CommandLineOptions.fileRegex = new Regex ("\\.c|\\.h");
-    CommandLineOptions.fastenableRegex = new Regex ("FASTENABLE");
+type Fastener = {
+    line : Line;
+    column : Column;
+    length : Length;
+    value : Value;
 }
 
-let parseCommandLineOptions =
+[<NoComparison>]
+type File = {
+    lines : seq<int * string>;
+    fasteners : seq<Fastener>;
+}
+
+(* Things that should exist. *)
+
+let errorfn (format : Printf.TextWriterFormat<'a>) : 'a =
+    fprintfn stderr format
+
+let pair (a : 'a) (b : 'b) : 'a * 'b =
+    a, b
+
+let zipi : IEnumerable<'a> -> seq<int * 'a> =
+    Seq.mapi pair
+
+(* Error reporting utilities. *)
+
+let reportUsage () : unit =
+    errorfn "Usage: fasten [-f <file pattern>] <directory>..."
+    exit 1
+
+let reportError (``exception`` : 'a) (message : string) : 'b =
+    errorfn "Error: %s\n%s" (``exception``.ToString ()) message
+    exit 1
+
+let reportDirectoryNotFound (name : DirectoryPath) : 'a =
+    errorfn "Directory not found: %s" name
+    exit 1
+
+let reportInvalidFlag (flag : string) (expected : string) : 'a =
+    errorfn  "Invalid flag %s; expected %s" flag expected
+    exit 1
+
+(* Command-line options. *)
+
+let defaultOptions : CommandLineOptions = {
+    fileRegex = new Regex ("\\.c|\\.h");
+    fastenableRegex = new Regex ("FASTENABLE\\s*\\((\\d+)\\)");
+}
+
+let parseCommandLineOptions
+    : string list -> CommandLineOptions * string list =
     let rec
         go = fun ((options, unused) as acc) -> function
             | "-f" :: pattern :: rest ->
                 go
                     ({ options with fileRegex = new Regex (pattern) }, unused)
                     rest
-            | "-f" :: [] -> reportInvalidFlag "-f" "pattern"
+            | "-f" :: [] -> reportInvalidFlag "-f" "<pattern>"
             | x :: rest ->
                 go (options, x :: unused) rest
             | [] -> acc
     go (defaultOptions, [])
 
-let processFile (options : CommandLineOptions) file =
-    let lines = System.IO.File.ReadLines file |> zipi
-    let filteredLines =
-        Seq.filter (fun (index, text) -> options.fastenableRegex.IsMatch text) lines
-    for index, text in filteredLines do
-        printfn "%s:%d:%s" file index text
+(* Processing functions. *)
 
-let processDirectory options directory =
+let processFile
+    (options : CommandLineOptions) (file : FilePath) : option<File> =
+    (* This is eager ('ReadAllLines' rather than 'ReadLines') in order to avoid too many open files in large directory trees due to lazy I/O. *)
+    let lines = System.IO.File.ReadAllLines file |> zipi
+    let fastenable (index, text) =
+        let ``match`` = options.fastenableRegex.Match text
+        if ``match``.Success && ``match``.Groups.Count >= 1
+            then Some (index, ``match``.Groups.[1])
+            else None
+    let groups = Seq.choose fastenable lines
+    let fastenerOfGroup (line, group : Group) = {
+        Fastener.line = line;
+        Fastener.column = group.Index;
+        Fastener.length = group.Length;
+        Fastener.value = System.Int64.Parse group.Value;
+    }
+    let fasteners = Seq.map fastenerOfGroup groups
+    if Seq.isEmpty fasteners
+        then None
+        else Some { lines = lines; fasteners = fasteners }
+
+let processDirectory
+    (options : CommandLineOptions) (directory : DirectoryPath) : seq<File> =
     printfn "Processing directory: %s\n" directory;
     let files =
         try Directory.GetFiles (directory, "*", SearchOption.AllDirectories)
         with
-            | :? System.IO.DirectoryNotFoundException -> reportDirectoryNotFound directory
+            | :? System.IO.DirectoryNotFoundException ->
+                reportDirectoryNotFound directory
             | e -> reportError e ("Directory: " + directory)
-    files |> Seq.filter options.fileRegex.IsMatch |> Seq.iter (processFile options)
+    files
+        |> Seq.filter options.fileRegex.IsMatch
+        |> Seq.choose (processFile options)
+
+(* Entry point. *)
 
 [<EntryPoint>]
-let main argv =
+let main (argv : string []) : int =
     let options, directories = Array.toList argv |> parseCommandLineOptions
     if List.isEmpty directories then reportUsage ()
-    List.iter (processDirectory options) directories
+    let files = List.map (processDirectory options) directories |> Seq.concat
+    for file in files do
+        printfn "File: %A" file.fasteners
     0
