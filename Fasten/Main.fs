@@ -6,9 +6,9 @@ open System.Text.RegularExpressions
 
 type FilePath = string
 type DirectoryPath = string
-type Line = int
-type Column = int
-type Length = int
+type Line = uint32
+type Column = uint32
+type Length = uint32
 type Value = int64
 
 [<NoComparison>]
@@ -93,9 +93,9 @@ let processFile
             else None
     let groups = Seq.choose fastenable lines
     let fastenerOfGroup (line, group : Group) = {
-        Fastener.line = line;
-        Fastener.column = group.Index;
-        Fastener.length = group.Length;
+        Fastener.line = uint32 line;
+        Fastener.column = uint32 group.Index;
+        Fastener.length = uint32 group.Length;
         Fastener.value = System.Int64.Parse group.Value;
     }
     let fasteners = Seq.map fastenerOfGroup groups
