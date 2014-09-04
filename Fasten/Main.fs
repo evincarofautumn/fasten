@@ -218,7 +218,7 @@ let mutateFile (generator : Random) (file : File) : File =
 let exercisePopulation
     (options : CommandLineOptions) (population : Population) : Population =
     options.resetProcedure.Value () |> ignore
-    let writeFile file = ()
+    let writeFile file = ()  (* TODO Implement file patching. *)
     let writeIndividual = Array.iter writeFile
     let writePopulation = Array.iter writeIndividual population
     options.fitnessProcedure.Value () |> ignore
