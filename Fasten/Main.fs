@@ -1,4 +1,5 @@
-﻿open System.IO
+﻿open System
+open System.IO
 open System.Collections.Generic
 open System.Text.RegularExpressions
 
@@ -26,8 +27,9 @@ type Fastener = {
 
 [<NoComparison>]
 type File = {
-    lines : seq<int * string>;
-    fasteners : seq<Fastener>;
+    path : FilePath;
+    lines : (int * string) [];
+    fasteners : Fastener [];
 }
 
 (* Things that should exist. *)
@@ -40,6 +42,14 @@ let pair (a : 'a) (b : 'b) : 'a * 'b =
 
 let zipi : IEnumerable<'a> -> seq<int * 'a> =
     Seq.mapi pair
+
+let mapRandom (generator : Random) (f : 'a -> 'a) (xs : 'a []) : 'a [] =
+    let index = abs (generator.Next ()) % xs.Length
+    Array.concat
+        [ Array.sub xs 0 (max 0 (index - 1))
+        ; [|f (xs.[index])|]
+        ; Array.sub xs (index + 1) (max 0 (xs.Length - index - 1))
+        ]
 
 (* Error reporting utilities. *)
 
@@ -101,7 +111,11 @@ let processFile
     let fasteners = Seq.map fastenerOfGroup groups
     if Seq.isEmpty fasteners
         then None
-        else Some { lines = lines; fasteners = fasteners }
+        else Some {
+            path = file;
+            lines = Array.ofSeq lines;
+            fasteners = Array.ofSeq fasteners;
+        }
 
 let processDirectory
     (options : CommandLineOptions) (directory : DirectoryPath) : seq<File> =
@@ -116,13 +130,38 @@ let processDirectory
         |> Seq.filter options.fileRegex.IsMatch
         |> Seq.choose (processFile options)
 
+(* Evolution. *)
+
+let isPowerOfTwo (x : int64) : bool =
+    x <> 0L && (x &&& (x - 1L)) = 0L
+
+let evolveValue (generator : Random) (value : Value) : Value =
+    if isPowerOfTwo value
+        then
+            if generator.NextDouble () < 0.5
+                then value >>> 1
+                else value <<< 1
+        else
+            if generator.NextDouble () < 0.5
+                then value - 1L
+                else value + 1L
+
+let evolveFastener
+    (generator : Random) (fastener : Fastener) : Fastener =
+    { fastener with value = evolveValue generator fastener.value }
+
+let evolveFile (generator : Random) (file : File) : File =
+    { file with fasteners = mapRandom generator (evolveFastener generator) file.fasteners }
+
 (* Entry point. *)
 
 [<EntryPoint>]
 let main (argv : string []) : int =
     let options, directories = Array.toList argv |> parseCommandLineOptions
     if List.isEmpty directories then reportUsage ()
-    let files = List.map (processDirectory options) directories |> Seq.concat
-    for file in files do
-        printfn "File: %A" file.fasteners
+    let files = List.map (processDirectory options) directories |> Seq.concat |> Array.ofSeq
+    let mutations = ref 0
+    let generator = new Random ()
+    let evolved = mapRandom generator (evolveFile generator) files
+    printfn "Original:\n%A\nEvolved:\n%A" files evolved
     0
