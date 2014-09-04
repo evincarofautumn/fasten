@@ -94,7 +94,8 @@ let parseCommandLineOptions
 
 let processFile
     (options : CommandLineOptions) (file : FilePath) : option<File> =
-    (* This is eager ('ReadAllLines' rather than 'ReadLines') in order to avoid too many open files in large directory trees due to lazy I/O. *)
+    (* This is eager ('ReadAllLines' rather than 'ReadLines') in order to avoid
+        too many open files in large directory trees due to lazy I/O. *)
     let lines = System.IO.File.ReadAllLines file |> zipi
     let fastenable (index, text) =
         let ``match`` = options.fastenableRegex.Match text
@@ -151,7 +152,9 @@ let evolveFastener
     { fastener with value = evolveValue generator fastener.value }
 
 let evolveFile (generator : Random) (file : File) : File =
-    { file with fasteners = mapRandom generator (evolveFastener generator) file.fasteners }
+    { file with
+        fasteners = mapRandom generator
+            (evolveFastener generator) file.fasteners }
 
 (* Entry point. *)
 
@@ -159,7 +162,9 @@ let evolveFile (generator : Random) (file : File) : File =
 let main (argv : string []) : int =
     let options, directories = Array.toList argv |> parseCommandLineOptions
     if List.isEmpty directories then reportUsage ()
-    let files = List.map (processDirectory options) directories |> Seq.concat |> Array.ofSeq
+    let files =
+        List.map (processDirectory options) directories
+        |> Seq.concat |> Array.ofSeq
     let mutations = ref 0
     let generator = new Random ()
     let evolved = mapRandom generator (evolveFile generator) files
