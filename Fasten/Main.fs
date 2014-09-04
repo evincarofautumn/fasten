@@ -34,22 +34,30 @@ type File = {
 
 (* Things that should exist. *)
 
+let cointoss (generator : Random) =
+    generator.NextDouble () < 0.5
+
 let errorfn (format : Printf.TextWriterFormat<'a>) : 'a =
     fprintfn stderr format
 
 let pair (a : 'a) (b : 'b) : 'a * 'b =
     a, b
 
-let zipi : IEnumerable<'a> -> seq<int * 'a> =
+let zipi<'a> : IEnumerable<'a> -> seq<int * 'a> =
     Seq.mapi pair
 
-let mapRandom (generator : Random) (f : 'a -> 'a) (xs : 'a []) : 'a [] =
-    let index = abs (generator.Next ()) % xs.Length
+let randomInRange (generator : Random) (range : int) : int =
+    int32 (uint32 (generator.Next ()) % uint32 range)
+
+let mapIndex (f : 'a -> 'a) (xs : 'a []) (i : int) =
     Array.concat
-        [ Array.sub xs 0 (max 0 (index - 1))
-        ; [|f (xs.[index])|]
-        ; Array.sub xs (index + 1) (max 0 (xs.Length - index - 1))
+        [ Array.sub xs 0 (max 0 (i - 1))
+        ; [|f (xs.[i])|]
+        ; Array.sub xs (i + 1) (max 0 (xs.Length - i - 1))
         ]
+
+let mapRandom (generator : Random) (f : 'a -> 'a) (xs : 'a []) : 'a [] =
+    randomInRange generator xs.Length |> mapIndex f xs
 
 (* Error reporting utilities. *)
 
@@ -138,14 +146,8 @@ let isPowerOfTwo (x : int64) : bool =
 
 let evolveValue (generator : Random) (value : Value) : Value =
     if isPowerOfTwo value
-        then
-            if generator.NextDouble () < 0.5
-                then value >>> 1
-                else value <<< 1
-        else
-            if generator.NextDouble () < 0.5
-                then value - 1L
-                else value + 1L
+        then if cointoss generator then value >>> 1 else value <<< 1
+        else if cointoss generator then value - 1L else value + 1L
 
 let evolveFastener
     (generator : Random) (fastener : Fastener) : Fastener =
