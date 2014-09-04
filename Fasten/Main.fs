@@ -1,21 +1,25 @@
 ﻿open System
 open System.IO
 open System.Collections.Generic
+open System.Diagnostics
 open System.Text.RegularExpressions
 
 (* Types. *)
 
-type FilePath = string
-type DirectoryPath = string
-type Line = uint32
 type Column = uint32
+type DirectoryPath = string
+type FilePath = string
 type Length = uint32
+type Line = uint32
 type Value = int64
 
 [<NoComparison>]
 type CommandLineOptions = {
-    fileRegex : Regex;
     fastenableRegex : Regex;
+    fileRegex : Regex;
+    fitnessProcedure : option<unit -> string>;
+    populationSize : int;
+    resetProcedure : option<unit -> string>;
 }
 
 type Fastener = {
@@ -31,6 +35,8 @@ type File = {
     lines : (int * string) [];
     fasteners : Fastener [];
 }
+
+type Population = File [] []
 
 (* Things that should exist. *)
 
@@ -65,7 +71,8 @@ let mapRandom (generator : Random) (f : 'a -> 'a) (xs : 'a []) : 'a [] =
 (* Error reporting utilities. *)
 
 let reportUsage () : unit =
-    errorfn "Usage: fasten [-f <file pattern>] <directory>..."
+    errorfn
+        "Usage: fasten [--files <regex>] --fitness <command> --reset <command> <directory>..."
     exit 1
 
 let reportError (``exception`` : 'a) (message : string) : 'b =
@@ -76,26 +83,75 @@ let reportDirectoryNotFound (name : DirectoryPath) : 'a =
     errorfn "Directory not found: %s" name
     exit 1
 
+let reportFailedCommand (command : string) : 'a =
+    errorfn "Command failed: %s" command
+    exit 1
+
 let reportInvalidFlag (flag : string) (expected : string) : 'a =
     errorfn  "Invalid flag %s; expected %s" flag expected
     exit 1
 
+(* Running external processes. *)
+
+let runCommand (command : string) () =
+    let mutable ``process`` = new Process ()
+    (* FIXME This regex is brittle, but I didn’t want to add separate
+        command-line options for process arguments. *)
+    let ``match`` = Regex.Match (command, "^(\\S+)(.*)$")
+    let executable = ``match``.Groups.[1].Value
+    printfn "Running executable: '%s'" executable
+    let arguments = ``match``.Groups.[2].Value
+    ``process``.StartInfo.FileName <- executable
+    ``process``.StartInfo.Arguments <- arguments
+    ``process``.StartInfo.UseShellExecute <- false
+    ``process``.StartInfo.RedirectStandardOutput <- true
+    ``process``.StartInfo.RedirectStandardError <- true
+    try
+        if ``process``.Start ()
+            then
+                let output = ``process``.StandardOutput.ReadToEnd ()
+                ``process``.WaitForExit ()
+                output
+            else reportFailedCommand command
+    with e -> reportFailedCommand command
+
 (* Command-line options. *)
 
 let defaultOptions : CommandLineOptions = {
+    fastenableRegex = new Regex ("(?<=FASTENABLE\\s*\\()\\d+(?=\\))");
     fileRegex = new Regex ("\\.c|\\.h");
-    fastenableRegex = new Regex ("FASTENABLE\\s*\\((\\d+)\\)");
+    fitnessProcedure = None;
+    populationSize = 20;
+    resetProcedure = None;
 }
 
 let parseCommandLineOptions
     : string list -> CommandLineOptions * string list =
     let rec
         go = fun ((options, unused) as acc) -> function
-            | "-f" :: pattern :: rest ->
+            | "--files" :: pattern :: rest ->
                 go
                     ({ options with fileRegex = new Regex (pattern) }, unused)
                     rest
-            | "-f" :: [] -> reportInvalidFlag "-f" "<pattern>"
+            | "--files" :: [] -> reportInvalidFlag "--files" "<regex>"
+            | "--fitness" :: command :: rest ->
+                go
+                    ( { options
+                        with fitnessProcedure = Some (runCommand command) }
+                    , unused
+                    )
+                    rest
+            | "--fitness" :: [] ->
+                reportInvalidFlag "--fitness" "<command>"
+            | "--reset" :: command :: rest ->
+                go
+                    ( { options
+                        with resetProcedure = Some (runCommand command) }
+                    , unused
+                    )
+                    rest
+            | "--reset" :: [] ->
+                reportInvalidFlag "--reset" "<command>"
             | x :: rest ->
                 go (options, x :: unused) rest
             | [] -> acc
@@ -111,7 +167,7 @@ let readFile
     let fastenable (index, text) =
         let ``match`` = options.fastenableRegex.Match text
         if ``match``.Success && ``match``.Groups.Count >= 1
-            then Some (index, ``match``.Groups.[1])
+            then Some (index, ``match``.Groups.[0])
             else None
     let groups = Seq.choose fastenable lines
     let fastenerOfGroup (line, group : Group) = {
@@ -157,17 +213,45 @@ let mutateFile (generator : Random) (file : File) : File =
         fasteners = mapRandom generator
             (mutateFastener generator) file.fasteners }
 
+(* Fitness testing. *)
+
+let exercisePopulation
+    (options : CommandLineOptions) (population : Population) : Population =
+    options.resetProcedure.Value () |> ignore
+    let writeFile file = ()
+    let writeIndividual = Array.iter writeFile
+    let writePopulation = Array.iter writeIndividual population
+    options.fitnessProcedure.Value () |> ignore
+    population
+
 (* Entry point. *)
 
 [<EntryPoint>]
 let main (argv : string []) : int =
     let options, directories = Array.toList argv |> parseCommandLineOptions
-    if List.isEmpty directories then reportUsage ()
+    if List.isEmpty directories
+        || options.fitnessProcedure.IsNone
+        || options.resetProcedure.IsNone
+        then reportUsage ()
     let files =
         List.map (readDirectory options) directories
-        |> Seq.concat |> Array.ofSeq
-    let mutations = ref 0
+            |> Seq.concat |> Array.ofSeq
     let generator = new Random ()
-    let evolved = mapRandom generator (mutateFile generator) files
-    printfn "Original:\n%A\nEvolved:\n%A" files evolved
+    (* Since we only have one example individual—the initial source tree—we
+        generate an initial population by mutating the original, which is
+        assumed to be reasonably fit already. *)
+    let initialPopulation =
+        Seq.init options.populationSize
+            (fun _ -> mapRandom generator (mutateFile generator) files)
+            |> Array.ofSeq
+    (*
+        for each generation:
+            take the fitness of each individual
+            sort the individuals by fitness
+            keep the top 50%
+            fill the remaining 50% of the new population with:
+                10% mutation
+                90% 50-50 crossover
+    *)
+    let population = exercisePopulation options initialPopulation
     0
