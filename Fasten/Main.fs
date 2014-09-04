@@ -40,6 +40,9 @@ let cointoss (generator : Random) =
 let errorfn (format : Printf.TextWriterFormat<'a>) : 'a =
     fprintfn stderr format
 
+let isPowerOfTwo (x : int64) : bool =
+    x <> 0L && (x &&& (x - 1L)) = 0L
+
 let pair (a : 'a) (b : 'b) : 'a * 'b =
     a, b
 
@@ -98,9 +101,9 @@ let parseCommandLineOptions
             | [] -> acc
     go (defaultOptions, [])
 
-(* Processing functions. *)
+(* Reading. *)
 
-let processFile
+let readFile
     (options : CommandLineOptions) (file : FilePath) : option<File> =
     (* This is eager ('ReadAllLines' rather than 'ReadLines') in order to avoid
         too many open files in large directory trees due to lazy I/O. *)
@@ -126,9 +129,8 @@ let processFile
             fasteners = Array.ofSeq fasteners;
         }
 
-let processDirectory
+let readDirectory
     (options : CommandLineOptions) (directory : DirectoryPath) : seq<File> =
-    printfn "Processing directory: %s\n" directory;
     let files =
         try Directory.GetFiles (directory, "*", SearchOption.AllDirectories)
         with
@@ -137,26 +139,23 @@ let processDirectory
             | e -> reportError e ("Directory: " + directory)
     files
         |> Seq.filter options.fileRegex.IsMatch
-        |> Seq.choose (processFile options)
+        |> Seq.choose (readFile options)
 
-(* Evolution. *)
+(* Genetic mutation. *)
 
-let isPowerOfTwo (x : int64) : bool =
-    x <> 0L && (x &&& (x - 1L)) = 0L
-
-let evolveValue (generator : Random) (value : Value) : Value =
+let mutateValue (generator : Random) (value : Value) : Value =
     if isPowerOfTwo value
         then if cointoss generator then value >>> 1 else value <<< 1
         else if cointoss generator then value - 1L else value + 1L
 
-let evolveFastener
+let mutateFastener
     (generator : Random) (fastener : Fastener) : Fastener =
-    { fastener with value = evolveValue generator fastener.value }
+    { fastener with value = mutateValue generator fastener.value }
 
-let evolveFile (generator : Random) (file : File) : File =
+let mutateFile (generator : Random) (file : File) : File =
     { file with
         fasteners = mapRandom generator
-            (evolveFastener generator) file.fasteners }
+            (mutateFastener generator) file.fasteners }
 
 (* Entry point. *)
 
@@ -165,10 +164,10 @@ let main (argv : string []) : int =
     let options, directories = Array.toList argv |> parseCommandLineOptions
     if List.isEmpty directories then reportUsage ()
     let files =
-        List.map (processDirectory options) directories
+        List.map (readDirectory options) directories
         |> Seq.concat |> Array.ofSeq
     let mutations = ref 0
     let generator = new Random ()
-    let evolved = mapRandom generator (evolveFile generator) files
+    let evolved = mapRandom generator (mutateFile generator) files
     printfn "Original:\n%A\nEvolved:\n%A" files evolved
     0
