@@ -11,7 +11,7 @@ type DirectoryPath = string
 type FilePath = string
 type Fitness = float
 type Length = uint32
-type Line = uint32
+type Line = int
 type Value = int64
 
 [<NoComparison>]
@@ -26,8 +26,6 @@ type CommandLineOptions = {
 
 type Fastener = {
     line : Line;
-    column : Column;
-    length : Length;
     value : Value;
 }
 
@@ -172,9 +170,7 @@ let readFile
         else None
     let groups = Seq.choose fastenable lines
     let fastenerOfGroup (line, group : Group) = {
-        Fastener.line = uint32 line;
-        Fastener.column = uint32 group.Index;
-        Fastener.length = uint32 group.Length;
+        Fastener.line = line;
         Fastener.value = System.Int64.Parse group.Value;
     }
     let fasteners = Seq.map fastenerOfGroup groups
@@ -224,9 +220,8 @@ let exercisePopulation
         let writer = new StreamWriter (file.path)
         for line, text in file.lines do
             for fastener in file.fasteners do
-                (* FIXME: I don’t like this cast. *)
                 let text =
-                    if fastener.line = uint32 line then
+                    if fastener.line = line then
                         options.fastenableRegex.Replace
                             (text, fastener.value.ToString ())
                     else text
