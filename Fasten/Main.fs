@@ -9,11 +9,13 @@ open System.Text.RegularExpressions
 type Column = uint32
 type DirectoryPath = string
 type FilePath = string
+type Fitness = float
 type Length = uint32
 type Line = uint32
 type Value = int64
 
 [<NoComparison>]
+[<NoEquality>]
 type CommandLineOptions = {
     fastenableRegex : Regex;
     fileRegex : Regex;
@@ -66,7 +68,8 @@ let mapIndex (f : 'a -> 'a) (xs : 'a []) (i : int) =
         ]
 
 let mapRandom (generator : Random) (f : 'a -> 'a) (xs : 'a []) : 'a [] =
-    randomInRange generator xs.Length |> mapIndex f xs
+    if xs.Length = 0 then xs
+    else randomInRange generator xs.Length |> mapIndex f xs
 
 (* Error reporting utilities. *)
 
@@ -99,7 +102,6 @@ let runCommand (command : string) () =
         command-line options for process arguments. *)
     let ``match`` = Regex.Match (command, "^(\\S+)(.*)$")
     let executable = ``match``.Groups.[1].Value
-    printfn "Running executable: '%s'" executable
     let arguments = ``match``.Groups.[2].Value
     ``process``.StartInfo.FileName <- executable
     ``process``.StartInfo.Arguments <- arguments
@@ -107,12 +109,11 @@ let runCommand (command : string) () =
     ``process``.StartInfo.RedirectStandardOutput <- true
     ``process``.StartInfo.RedirectStandardError <- true
     try
-        if ``process``.Start ()
-            then
-                let output = ``process``.StandardOutput.ReadToEnd ()
-                ``process``.WaitForExit ()
-                output
-            else reportFailedCommand command
+        if ``process``.Start () then
+            let output = ``process``.StandardOutput.ReadToEnd ()
+            ``process``.WaitForExit ()
+            output
+        else reportFailedCommand command
     with e -> reportFailedCommand command
 
 (* Command-line options. *)
@@ -166,9 +167,9 @@ let readFile
     let lines = System.IO.File.ReadAllLines file |> zipi
     let fastenable (index, text) =
         let ``match`` = options.fastenableRegex.Match text
-        if ``match``.Success && ``match``.Groups.Count >= 1
-            then Some (index, ``match``.Groups.[0])
-            else None
+        if ``match``.Success && ``match``.Groups.Count >= 1 then
+            Some (index, ``match``.Groups.[0])
+        else None
     let groups = Seq.choose fastenable lines
     let fastenerOfGroup (line, group : Group) = {
         Fastener.line = uint32 line;
@@ -177,9 +178,9 @@ let readFile
         Fastener.value = System.Int64.Parse group.Value;
     }
     let fasteners = Seq.map fastenerOfGroup groups
-    if Seq.isEmpty fasteners
-        then None
-        else Some {
+    if Seq.isEmpty fasteners then None
+    else
+        Some {
             path = file;
             lines = Array.ofSeq lines;
             fasteners = Array.ofSeq fasteners;
@@ -200,9 +201,10 @@ let readDirectory
 (* Genetic mutation. *)
 
 let mutateValue (generator : Random) (value : Value) : Value =
-    if isPowerOfTwo value
-        then if cointoss generator then value >>> 1 else value <<< 1
-        else if cointoss generator then value - 1L else value + 1L
+    if isPowerOfTwo value then
+        if cointoss generator then value >>> 1 else value <<< 1
+    else
+        if cointoss generator then value - 1L else value + 1L
 
 let mutateFastener
     (generator : Random) (fastener : Fastener) : Fastener =
@@ -216,13 +218,28 @@ let mutateFile (generator : Random) (file : File) : File =
 (* Fitness testing. *)
 
 let exercisePopulation
-    (options : CommandLineOptions) (population : Population) : Population =
-    options.resetProcedure.Value () |> ignore
-    let writeFile file = ()  (* TODO Implement file patching. *)
-    let writeIndividual = Array.iter writeFile
-    let writePopulation = Array.iter writeIndividual population
-    options.fitnessProcedure.Value () |> ignore
-    population
+    (options : CommandLineOptions) (population : Population)
+    : (File [] * Fitness) [] =
+    let writeFile file =
+        let writer = new StreamWriter (file.path)
+        for line, text in file.lines do
+            for fastener in file.fasteners do
+                (* FIXME: I don’t like this cast. *)
+                let text =
+                    if fastener.line = uint32 line then
+                        options.fastenableRegex.Replace
+                            (text, fastener.value.ToString ())
+                    else text
+                writer.WriteLine text
+        writer.Close ()
+    let writeIndividual individual =
+        Array.iter writeFile individual
+    let exercise individual =
+        options.resetProcedure.Value () |> ignore
+        writeIndividual individual
+        (* FIXME: Can fail to parse. *)
+        1.0 / System.Double.Parse (options.fitnessProcedure.Value ())
+    Array.map exercise population |> Array.zip population
 
 (* Entry point. *)
 
@@ -231,8 +248,8 @@ let main (argv : string []) : int =
     let options, directories = Array.toList argv |> parseCommandLineOptions
     if List.isEmpty directories
         || options.fitnessProcedure.IsNone
-        || options.resetProcedure.IsNone
-        then reportUsage ()
+        || options.resetProcedure.IsNone then
+        reportUsage ()
     let files =
         List.map (readDirectory options) directories
             |> Seq.concat |> Array.ofSeq
