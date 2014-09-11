@@ -17,6 +17,7 @@ type Value = int64
 [<NoComparison>]
 [<NoEquality>]
 type CommandLineOptions = {
+    buildProcedure : option<unit -> string>;
     fastenableRegex : Regex;
     fileRegex : Regex;
     fitnessProcedure : option<unit -> string>;
@@ -73,7 +74,7 @@ let mapRandom (generator : Random) (f : 'a -> 'a) (xs : 'a []) : 'a [] =
 
 let reportUsage () : unit =
     errorfn
-        "Usage: fasten [--files <regex>] --fitness <command> --reset <command> <directory>..."
+        "Usage: fasten [--files <regex>] --build <command> --fitness <command> --reset <command> <directory>..."
     exit 1
 
 let reportError (``exception`` : 'a) (message : string) : 'b =
@@ -84,8 +85,15 @@ let reportDirectoryNotFound (name : DirectoryPath) : 'a =
     errorfn "Directory not found: %s" name
     exit 1
 
-let reportFailedCommand (command : string) : 'a =
+let reportFailedCommand (command : string) (errors : option<string>) : 'a =
     errorfn "Command failed: %s" command
+    match errors with
+        | Some errors -> errorfn "%s" errors
+        | None -> ()
+    exit 1
+
+let reportInvalidFitnessOutput (fitnessOutput : string) =
+    errorfn "Invalid fitness function output: '%s'" fitnessOutput
     exit 1
 
 let reportInvalidFlag (flag : string) (expected : string) : 'a =
@@ -95,32 +103,49 @@ let reportInvalidFlag (flag : string) (expected : string) : 'a =
 (* Running external processes. *)
 
 let runCommand (command : string) () =
-    let mutable ``process`` = new Process ()
-    (* FIXME This regex is brittle, but I didn’t want to add separate
-        command-line options for process arguments. *)
-    let ``match`` = Regex.Match (command, "^(\\S+)(.*)$")
-    let executable = ``match``.Groups.[1].Value
-    let arguments = ``match``.Groups.[2].Value
-    ``process``.StartInfo.FileName <- executable
-    ``process``.StartInfo.Arguments <- arguments
-    ``process``.StartInfo.UseShellExecute <- false
-    ``process``.StartInfo.RedirectStandardOutput <- true
-    ``process``.StartInfo.RedirectStandardError <- true
     try
+        let mutable ``process`` = new Process ()
+        (* FIXME This regex is brittle, but I didn’t want to add separate
+            command-line options for process arguments. *)
+        let ``match`` = Regex.Match (command, "^(\\S+)(.*)$")
+        let executable = ``match``.Groups.[1].Value
+        let arguments = ``match``.Groups.[2].Value
+        ``process``.StartInfo.FileName <- executable
+        ``process``.StartInfo.Arguments <- arguments
+        ``process``.StartInfo.UseShellExecute <- false
+        ``process``.StartInfo.RedirectStandardOutput <- true
+        ``process``.StartInfo.RedirectStandardError <- true
+        ``process``.StartInfo.WorkingDirectory <-
+            Directory.GetCurrentDirectory ()
+        let output = new System.Text.StringBuilder ()
+        let error = new System.Text.StringBuilder ()
         if ``process``.Start () then
-            let output = ``process``.StandardOutput.ReadToEnd ()
-            ``process``.WaitForExit ()
-            output
-        else reportFailedCommand command
-    with e -> reportFailedCommand command
+            ``process``.OutputDataReceived.Add
+                (fun args -> output.Append(args.Data) |> ignore)
+            ``process``.ErrorDataReceived.Add
+                (fun args -> error.Append(args.Data) |> ignore)
+            ``process``.BeginErrorReadLine ()
+            ``process``.BeginOutputReadLine ()
+            (* FIXME: Put with other configuration. *)
+            let timeout = 60 * 1000
+            if ``process``.WaitForExit timeout then
+                if ``process``.ExitCode = 0 then output.ToString ()
+                else reportFailedCommand command (Some (error.ToString ()))
+            else
+                ``process``.Kill ()
+                (* Individuals that take too long to exercise are unfit! *)
+                "0.0"
+        else reportFailedCommand command None
+    with e -> reportFailedCommand command (Some (e.ToString ()))
 
 (* Command-line options. *)
 
 let defaultOptions : CommandLineOptions = {
-    fastenableRegex = new Regex ("(?<=FASTENABLE\\s*\\()\\d+(?=\\))");
+    buildProcedure = None;
+    fastenableRegex = new Regex ("\\d+(?=\\s*/\\*\\s*FASTENABLE\\s*\\*/)");
     fileRegex = new Regex ("\\.c|\\.h");
     fitnessProcedure = None;
-    populationSize = 20;
+    populationSize = 5;
     resetProcedure = None;
 }
 
@@ -128,6 +153,15 @@ let parseCommandLineOptions
     : string list -> CommandLineOptions * string list =
     let rec
         go = fun ((options, unused) as acc) -> function
+            | "--build" :: command :: rest ->
+                go
+                    ( { options
+                        with buildProcedure = Some (runCommand command) }
+                    , unused
+                    )
+                    rest
+            | "--build" :: [] ->
+                reportInvalidFlag "--build" "<command>"
             | "--files" :: pattern :: rest ->
                 go
                     ({ options with fileRegex = new Regex (pattern) }, unused)
@@ -216,6 +250,7 @@ let mutateFile (generator : Random) (file : File) : File =
 let exercisePopulation
     (options : CommandLineOptions) (population : Population)
     : (File [] * Fitness) [] =
+    printfn "Exercising population."
     let writeFile file =
         let writer = new StreamWriter (file.path)
         for line, text in file.lines do
@@ -226,14 +261,25 @@ let exercisePopulation
                             (text, fastener.value.ToString ())
                     else text
                 writer.WriteLine text
+        writer.Flush ()
         writer.Close ()
     let writeIndividual individual =
         Array.iter writeFile individual
     let exercise individual =
+        printfn "Resetting tree."
         options.resetProcedure.Value () |> ignore
+        printfn "Writing individual."
         writeIndividual individual
-        (* FIXME: Can fail to parse. *)
-        1.0 / System.Double.Parse (options.fitnessProcedure.Value ())
+        printfn "Building."
+        options.buildProcedure.Value () |> ignore
+        printfn "Testing fitness."
+        let fitnessOutput = options.fitnessProcedure.Value ()
+        let fitness =
+            try 1.0 / System.Double.Parse fitnessOutput
+            with :? System.FormatException ->
+                reportInvalidFitnessOutput fitnessOutput
+        printfn "Calculated fitness: %f." fitness
+        fitness
     Array.map exercise population |> Array.zip population
 
 (* Entry point. *)
@@ -242,9 +288,11 @@ let exercisePopulation
 let main (argv : string []) : int =
     let options, directories = Array.toList argv |> parseCommandLineOptions
     if List.isEmpty directories
+        || options.buildProcedure.IsNone
         || options.fitnessProcedure.IsNone
         || options.resetProcedure.IsNone then
         reportUsage ()
+    printfn "Loading files."
     let files =
         List.map (readDirectory options) directories
             |> Seq.concat |> Array.ofSeq
@@ -252,6 +300,7 @@ let main (argv : string []) : int =
     (* Since we only have one example individual—the initial source tree—we
         generate an initial population by mutating the original, which is
         assumed to be reasonably fit already. *)
+    printfn "Computing initial population."
     let initialPopulation =
         Seq.init options.populationSize
             (fun _ -> mapRandom generator (mutateFile generator) files)
