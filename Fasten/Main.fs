@@ -14,18 +14,21 @@ type Length = uint32
 type Line = int
 type Value = int64
 
+type Command = unit -> option<string>
+
 [<NoComparison>]
 [<NoEquality>]
 type CommandLineOptions = {
-    buildProcedure : option<unit -> string>;
+    buildProcedure : option<Command>;
     fastenableRegex : Regex;
     fileRegex : Regex;
-    fitnessProcedure : option<unit -> string>;
+    fitnessProcedure : option<Command>;
     populationSize : int;
-    resetProcedure : option<unit -> string>;
+    resetProcedure : option<Command>;
 }
 
 type Fastener = {
+    path : FilePath;
     line : Line;
     value : Value;
 }
@@ -37,12 +40,28 @@ type File = {
     fasteners : Fastener [];
 }
 
-type Population = File [] []
+type Individual = File []
+
+type Population = Individual []
+
+[<NoComparison>]
+type ExerciseResult = {
+    individual : Individual;
+    fitness : Fitness;
+}
+
+type RandomStep =
+    | Down
+    | Stay
+    | Up
 
 (* Things that should exist. *)
 
-let cointoss (generator : Random) =
-    generator.NextDouble () < 0.5
+let randomStep (generator : Random) =
+    let value = generator.NextDouble ()
+    if value < 0.33 then Down
+    elif value < 0.66 then Stay
+    else Up
 
 let errorfn (format : Printf.TextWriterFormat<'a>) : 'a =
     fprintfn stderr format
@@ -102,7 +121,7 @@ let reportInvalidFlag (flag : string) (expected : string) : 'a =
 
 (* Running external processes. *)
 
-let runCommand (command : string) () =
+let runCommand (command : string) () : option<string> =
     try
         let mutable ``process`` = new Process ()
         (* FIXME This regex is brittle, but I didn’t want to add separate
@@ -129,12 +148,13 @@ let runCommand (command : string) () =
             (* FIXME: Put with other configuration. *)
             let timeout = 60 * 1000
             if ``process``.WaitForExit timeout then
-                if ``process``.ExitCode = 0 then output.ToString ()
-                else reportFailedCommand command (Some (error.ToString ()))
+                if ``process``.ExitCode = 0 then
+                    Some (output.ToString ())
+                else None
             else
                 ``process``.Kill ()
                 (* Individuals that take too long to exercise are unfit! *)
-                "0.0"
+                None
         else reportFailedCommand command None
     with e -> reportFailedCommand command (Some (e.ToString ()))
 
@@ -145,7 +165,7 @@ let defaultOptions : CommandLineOptions = {
     fastenableRegex = new Regex ("\\d+(?=\\s*/\\*\\s*FASTENABLE\\s*\\*/)");
     fileRegex = new Regex ("\\.c|\\.h");
     fitnessProcedure = None;
-    populationSize = 5;
+    populationSize = 10;
     resetProcedure = None;
 }
 
@@ -204,6 +224,7 @@ let readFile
         else None
     let groups = Seq.choose fastenable lines
     let fastenerOfGroup (line, group : Group) = {
+        Fastener.path = file;
         Fastener.line = line;
         Fastener.value = System.Int64.Parse group.Value;
     }
@@ -231,10 +252,16 @@ let readDirectory
 (* Genetic mutation. *)
 
 let mutateValue (generator : Random) (value : Value) : Value =
-    if isPowerOfTwo value then
-        if cointoss generator then value >>> 1 else value <<< 1
+    if isPowerOfTwo value && value > 4L then
+        match randomStep generator with
+            | Down -> value >>> 1
+            | Stay -> value
+            | Up -> value <<< 1
     else
-        if cointoss generator then value - 1L else value + 1L
+        match randomStep generator with
+            | Down -> value - 1L
+            | Stay -> value
+            | Up -> value + 1L
 
 let mutateFastener
     (generator : Random) (fastener : Fastener) : Fastener =
@@ -249,7 +276,7 @@ let mutateFile (generator : Random) (file : File) : File =
 
 let exercisePopulation
     (options : CommandLineOptions) (population : Population)
-    : (File [] * Fitness) [] =
+    : ExerciseResult [] =
     printfn "Exercising population."
     let writeFile file =
         let writer = new StreamWriter (file.path)
@@ -274,13 +301,23 @@ let exercisePopulation
         options.buildProcedure.Value () |> ignore
         printfn "Testing fitness."
         let fitnessOutput = options.fitnessProcedure.Value ()
-        let fitness =
-            try 1.0 / System.Double.Parse fitnessOutput
-            with :? System.FormatException ->
-                reportInvalidFitnessOutput fitnessOutput
-        printfn "Calculated fitness: %f." fitness
-        fitness
-    Array.map exercise population |> Array.zip population
+        match fitnessOutput with
+            | Some output ->
+                try
+                    let fitness = 1.0 / System.Double.Parse output
+                    printfn "Calculated fitness: %f." fitness
+                    Some fitness
+                with e -> None
+            | None -> None
+    Array.map exercise population
+        |> Array.map2
+            (fun individual fitness ->
+                match fitness with
+                    | Some fitness ->
+                        Some { individual = individual; fitness = fitness }
+                    | None -> None)
+            population
+        |> Array.choose id
 
 (* Entry point. *)
 
@@ -305,6 +342,11 @@ let main (argv : string []) : int =
         Seq.init options.populationSize
             (fun _ -> mapRandom generator (mutateFile generator) files)
             |> Array.ofSeq
+    let results = exercisePopulation options initialPopulation
+    let sorted = Array.sortBy (fun result -> result.fitness) results
+    let fittest = sorted.[0]
+    printfn "Fittest configuration: %A"
+        (Array.collect (fun file -> file.fasteners) fittest.individual)
     (*
         for each generation:
             take the fitness of each individual
@@ -314,5 +356,4 @@ let main (argv : string []) : int =
                 10% mutation
                 90% 50-50 crossover
     *)
-    let population = exercisePopulation options initialPopulation
     0
