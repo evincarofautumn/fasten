@@ -30,8 +30,17 @@ type CommandLineOptions = {
 type Fastener = {
     path : FilePath;
     line : Line;
+    original : Value;
     value : Value;
 }
+
+(* FIXME: Is there no way to override “ToString” for record types? *)
+let stringOfFastener (fastener : Fastener) : string =
+    if fastener.value = fastener.original then ""
+    else
+        sprintf
+            "%s:%d: change %d to %d"
+            fastener.path fastener.line fastener.original fastener.value
 
 [<NoComparison>]
 type File = {
@@ -88,6 +97,14 @@ let mapIndex (f : 'a -> 'a) (xs : 'a []) (i : int) =
 let mapRandom (generator : Random) (f : 'a -> 'a) (xs : 'a []) : 'a [] =
     if xs.Length = 0 then xs
     else randomInRange generator xs.Length |> mapIndex f xs
+
+let swap (a: 'T []) (i : int) (j : int) =
+    let x = a.[i]
+    a.[i] <- a.[j]
+    a.[j] <- x
+
+let shuffleInPlace (generator : Random) (xs : 'T []) =
+    Array.iteri (fun i _ -> swap xs i (generator.Next (i, xs.Length))) xs
 
 (* Error reporting utilities. *)
 
@@ -148,11 +165,23 @@ let runCommand (command : string) () : option<string> =
             (* FIXME: Put with other configuration. *)
             let timeout = 60 * 1000
             if ``process``.WaitForExit timeout then
+                printfn "Output: %s" (output.ToString ())
+                printfn "Errors: %s" (error.ToString ())
                 if ``process``.ExitCode = 0 then
                     Some (output.ToString ())
-                else None
+                else
+                    printfn
+                        "Process failed with exit code %d. Output:\n%s\nErrors:\n%s"
+                        ``process``.ExitCode
+                        (output.ToString ())
+                        (error.ToString ())
+                    None
             else
-                ``process``.Kill ()
+                printfn "Process timed out."
+                if not ``process``.HasExited then
+                    ``process``.Kill ()
+                printfn "Output: %s" (output.ToString ())
+                printfn "Errors: %s" (error.ToString ())
                 (* Individuals that take too long to exercise are unfit! *)
                 None
         else reportFailedCommand command None
@@ -165,7 +194,7 @@ let defaultOptions : CommandLineOptions = {
     fastenableRegex = new Regex ("\\d+(?=\\s*/\\*\\s*FASTENABLE\\s*\\*/)");
     fileRegex = new Regex ("\\.c|\\.h");
     fitnessProcedure = None;
-    populationSize = 10;
+    populationSize = 20;
     resetProcedure = None;
 }
 
@@ -223,11 +252,14 @@ let readFile
             Some (index, ``match``.Groups.[0])
         else None
     let groups = Seq.choose fastenable lines
-    let fastenerOfGroup (line, group : Group) = {
-        Fastener.path = file;
-        Fastener.line = line;
-        Fastener.value = System.Int64.Parse group.Value;
-    }
+    let fastenerOfGroup (line, group : Group) =
+        let value = System.Int64.Parse group.Value
+        {
+            path = file;
+            line = line;
+            original = value;
+            value = value;
+        }
     let fasteners = Seq.map fastenerOfGroup groups
     if Seq.isEmpty fasteners then None
     else
@@ -281,33 +313,52 @@ let exercisePopulation
     let writeFile file =
         let writer = new StreamWriter (file.path)
         for line, text in file.lines do
-            for fastener in file.fasteners do
-                let text =
-                    if fastener.line = line then
+            let found =
+                Array.tryFind
+                    (fun fastener -> fastener.line = line)
+                    file.fasteners
+            let text =
+                match found with
+                    | Some found ->
                         options.fastenableRegex.Replace
-                            (text, fastener.value.ToString ())
-                    else text
-                writer.WriteLine text
+                            (text, found.value.ToString ())
+                    | None -> text
+            writer.WriteLine text
         writer.Flush ()
         writer.Close ()
-    let writeIndividual individual =
-        Array.iter writeFile individual
+    let writeIndividual =
+        Array.iter writeFile
     let exercise individual =
         printfn "Resetting tree."
         options.resetProcedure.Value () |> ignore
         printfn "Writing individual."
         writeIndividual individual
         printfn "Building."
-        options.buildProcedure.Value () |> ignore
-        printfn "Testing fitness."
-        let fitnessOutput = options.fitnessProcedure.Value ()
-        match fitnessOutput with
-            | Some output ->
-                try
-                    let fitness = 1.0 / System.Double.Parse output
-                    printfn "Calculated fitness: %f." fitness
-                    Some fitness
-                with e -> None
+        let buildStatus = options.buildProcedure.Value ()
+        match buildStatus with
+            | Some status ->
+                printfn "Testing fitness."
+                let fitnessOutput = options.fitnessProcedure.Value ()
+                match fitnessOutput with
+                    | Some output ->
+                        try
+                            let fitness = 1.0 / System.Double.Parse output
+                            printfn "Calculated fitness: %f." fitness
+                            Some fitness
+                        with
+                            | :? System.FormatException ->
+                                printfn
+                                    "Individual produced an invalid fitness result: '%s'"
+                                    output
+                                None
+                            | e ->
+                                printfn
+                                    "Individual did not produce a fitness result:\n%s"
+                                    (e.ToString ())
+                                None
+                    | None ->
+                        printfn "Individual died during exercise. :("
+                        None
             | None -> None
     Array.map exercise population
         |> Array.map2
@@ -318,6 +369,49 @@ let exercisePopulation
                     | None -> None)
             population
         |> Array.choose id
+
+(* Generating and running generations. *)
+
+let generatePopulation
+    (generator : Random) (size : int) (individual : Individual)
+    : Population =
+    Seq.init size
+        (fun _ -> mapRandom generator (mutateFile generator) individual)
+        |> Array.ofSeq
+
+let rec runGeneration
+    (generator : Random)
+    (generations : int)
+    (initial : Individual)
+    (options : CommandLineOptions)
+    (population : Population)
+    : Population =
+    printfn "%d generations remain." generations
+    let results = exercisePopulation options population
+    let sorted =
+        Array.sortBy (fun result -> -result.fitness) results
+            |> Array.map (fun result -> result.individual)
+    let oneThird = sorted.Length / 3
+    let fittest = Seq.take oneThird (Array.toSeq sorted) |> Seq.toArray
+    let breed (generator : Random) (a : Individual) (b : Individual)
+        : Individual =
+        let allTraits = Array.append a b
+        shuffleInPlace generator allTraits
+        Array.sub allTraits 0 ((a.Length + b.Length) / 2)
+    let cross (generator : Random) (group : Individual [])
+        : seq<Individual> =
+        Seq.init group.Length
+            (fun _ ->
+                let x = randomInRange generator group.Length
+                let y = randomInRange generator group.Length
+                breed generator group.[x] group.[y])
+    let crossed = cross generator fittest
+    let mutants = generatePopulation generator oneThird initial
+    let newPopulation =
+        Seq.append fittest crossed |> Seq.append mutants |> Seq.toArray
+    if generations < 1 then newPopulation
+    else
+        runGeneration generator (generations - 1) initial options newPopulation
 
 (* Entry point. *)
 
@@ -330,7 +424,7 @@ let main (argv : string []) : int =
         || options.resetProcedure.IsNone then
         reportUsage ()
     printfn "Loading files."
-    let files =
+    let initialIndividual =
         List.map (readDirectory options) directories
             |> Seq.concat |> Array.ofSeq
     let generator = new Random ()
@@ -339,21 +433,12 @@ let main (argv : string []) : int =
         assumed to be reasonably fit already. *)
     printfn "Computing initial population."
     let initialPopulation =
-        Seq.init options.populationSize
-            (fun _ -> mapRandom generator (mutateFile generator) files)
-            |> Array.ofSeq
-    let results = exercisePopulation options initialPopulation
-    let sorted = Array.sortBy (fun result -> result.fitness) results
-    let fittest = sorted.[0]
-    printfn "Fittest configuration: %A"
-        (Array.collect (fun file -> file.fasteners) fittest.individual)
-    (*
-        for each generation:
-            take the fitness of each individual
-            sort the individuals by fitness
-            keep the top 50%
-            fill the remaining 50% of the new population with:
-                10% mutation
-                90% 50-50 crossover
-    *)
+        generatePopulation generator options.populationSize initialIndividual
+    let finalPopulation =
+        runGeneration generator 5 initialIndividual options initialPopulation
+    finalPopulation
+        |> Array.map
+            (Array.map
+                (fun file -> Array.map stringOfFastener file.fasteners))
+        |> printfn "%A"
     0
