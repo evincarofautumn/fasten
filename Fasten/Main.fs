@@ -140,7 +140,7 @@ let reportInvalidFlag (flag : string) (expected : string) : 'a =
 
 let runCommand (command : string) () : option<string> =
     try
-        let mutable ``process`` = new Process ()
+        use mutable ``process`` = new Process ()
         (* FIXME This regex is brittle, but I didn’t want to add separate
             command-line options for process arguments. *)
         let ``match`` = Regex.Match (command, "^(\\S+)(.*)$")
