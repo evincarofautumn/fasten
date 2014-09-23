@@ -12,7 +12,10 @@ type FilePath = string
 type Fitness = float
 type Length = uint32
 type Line = int
-type Value = int64
+type Value =
+    | Regular of int64
+    | PowerOfTwo of int64
+    | Boolean of bool
 
 type Command = unit -> option<string>
 
@@ -34,13 +37,19 @@ type Fastener = {
     value : Value;
 }
 
+let stringOfValue (value : Value) : string =
+    match value with
+    | Regular i -> sprintf "%d" i
+    | PowerOfTwo i -> sprintf "%d" i
+    | Boolean b -> if b then "1" else "0"
+
 (* FIXME: Is there no way to override “ToString” for record types? *)
 let stringOfFastener (fastener : Fastener) : string =
     if fastener.value = fastener.original then ""
     else
         sprintf
-            "%s:%d: change %d to %d"
-            fastener.path fastener.line fastener.original fastener.value
+            "%s:%d: change %s to %s"
+            fastener.path fastener.line (stringOfValue fastener.original) (stringOfValue fastener.value)
 
 [<NoComparison>]
 type File = {
@@ -191,7 +200,7 @@ let runCommand (command : string) () : option<string> =
 
 let defaultOptions : CommandLineOptions = {
     buildProcedure = None;
-    fastenableRegex = new Regex ("\\d+(?=\\s*/\\*\\s*FASTENABLE\\s*\\*/)");
+    fastenableRegex = new Regex ("\\d+(?=\\s*/\\*\\s*(INT|POW|BOOL)\\s+FASTENABLE\\s*\\*/)");
     fileRegex = new Regex ("\\.c|\\.h");
     fitnessProcedure = None;
     populationSize = 20;
@@ -249,11 +258,18 @@ let readFile
     let fastenable (index, text) =
         let ``match`` = options.fastenableRegex.Match text
         if ``match``.Success && ``match``.Groups.Count >= 1 then
-            Some (index, ``match``.Groups.[0])
+            Some (index, ``match``.Groups.[0].Value, ``match``.Groups.[1].Value)
         else None
     let groups = Seq.choose fastenable lines
-    let fastenerOfGroup (line, group : Group) =
-        let value = System.Int64.Parse group.Value
+    printfn "All groups: %A" groups
+    let makeValue (t : string) (i : int64) =
+        match t with
+        | "INT" -> Regular i
+        | "POW" -> PowerOfTwo i
+        | "BOOL" -> Boolean (i <> 0L)
+        | _ -> raise (Exception "Illegal type")
+    let fastenerOfGroup (line, group : string, ``type`` : string) =
+        let value = makeValue ``type`` (System.Int64.Parse group)
         {
             path = file;
             line = line;
@@ -284,16 +300,22 @@ let readDirectory
 (* Genetic mutation. *)
 
 let mutateValue (generator : Random) (value : Value) : Value =
-    if isPowerOfTwo value && value > 4L then
-        match randomStep generator with
-            | Down -> value >>> 1
-            | Stay -> value
-            | Up -> value <<< 1
-    else
-        match randomStep generator with
-            | Down -> value - 1L
-            | Stay -> value
-            | Up -> value + 1L
+    let step = randomStep generator
+    match value with
+    | Regular i ->
+        match step with
+        | Down -> Regular (i - 1L)
+        | Stay -> value
+        | Up -> Regular (i + 1L)
+    | PowerOfTwo i ->
+        match step with
+        | Down -> PowerOfTwo (i >>> 1)
+        | Stay -> value
+        | Up -> PowerOfTwo (i <<< 1)
+    | Boolean b ->
+        match step with
+        | Down | Up -> Boolean (not b)
+        | Stay -> value
 
 let mutateFastener
     (generator : Random) (fastener : Fastener) : Fastener =
@@ -321,7 +343,7 @@ let exercisePopulation
                 match found with
                     | Some found ->
                         options.fastenableRegex.Replace
-                            (text, found.value.ToString ())
+                            (text, (stringOfValue found.value))
                     | None -> text
             writer.WriteLine text
         writer.Flush ()

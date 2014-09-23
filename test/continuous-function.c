@@ -1,13 +1,16 @@
 #include <stdio.h>
 #include <math.h>
+#include <assert.h>
 
-#define A	10	/* FASTENABLE */
-#define B	3	/* FASTENABLE */
-#define C	8	/* FASTENABLE */
+#define A	10	/* INT FASTENABLE */
+#define B	1	/* BOOL FASTENABLE */
+#define C	4	/* POW FASTENABLE */
 
 int
 main (void)
 {
-	printf ("%f\n", fabs ((A-5.5)*(B-8.5)*(C-2.5)));
+	assert (B == 0 || B == 1);
+	assert (C && !(C & (C-1)));
+	printf ("%f\n", fabs ((A-5.5)*(B+0.1)*(C-2.5)));
 	return 0;
 }
