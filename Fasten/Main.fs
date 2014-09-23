@@ -333,6 +333,9 @@ let mutateFile (generator : Random) (file : File) : File =
         fasteners = mapRandom generator
             (mutateFastener generator) file.fasteners }
 
+let mutateIndividual (generator : Random) =
+    mapRandom generator (mutateFile generator)
+
 (* Fitness testing. *)
 
 let exercisePopulation
@@ -405,7 +408,7 @@ let generatePopulation
     (generator : Random) (size : int) (individual : Individual)
     : Population =
     Seq.init size
-        (fun _ -> mapRandom generator (mutateFile generator) individual)
+        (fun _ -> mutateIndividual generator individual)
         |> Array.ofSeq
 
 let rec runGeneration
@@ -416,28 +419,47 @@ let rec runGeneration
     (population : Population)
     : Population =
     printfn "%d generations remain." generations
-    let results = exercisePopulation options population
-    let sorted =
-        Array.sortBy (fun result -> -result.fitness) results
-            |> Array.map (fun result -> result.individual)
-    let oneThird = sorted.Length / 3
-    let fittest = Seq.take oneThird (Array.toSeq sorted) |> Seq.toArray
+    let results =
+        exercisePopulation options population
+            |> Array.sortBy (fun result -> -result.fitness)
+    let oneHalf = results.Length / 2
+    let fittest = Seq.take oneHalf (Array.toSeq results) |> Seq.toArray
+    Array.Reverse fittest
     let breed (generator : Random) (a : Individual) (b : Individual)
         : Individual =
-        let allTraits = Array.append a b
-        shuffleInPlace generator allTraits
-        Array.sub allTraits 0 ((a.Length + b.Length) / 2)
-    let cross (generator : Random) (group : Individual [])
+        let mergeFiles x y =
+            let i = randomInRange generator x.fasteners.Length
+            { x with
+                fasteners =
+                    Seq.append
+                        (Seq.take i (Array.toSeq x.fasteners))
+                        (Seq.skip i (Array.toSeq y.fasteners))
+                    |> Seq.toArray }
+        (* Assumes the two individuals have their files in the same order. *)
+        Array.map2 mergeFiles a b
+    let cross (generator : Random) (group : ExerciseResult [])
         : seq<Individual> =
+        let sums =
+            Array.sub
+                (Array.scan (fun x result -> x + result.fitness) 0.0 group)
+                1 group.Length
+        let weightedRandomIndividual () =
+            let position = generator.NextDouble () * sums.[sums.Length - 1]
+            match Array.tryFindIndex (fun x -> position <= x) sums with
+                | Some index -> group.[index].individual
+                | None -> group.[group.Length - 1].individual
         Seq.init group.Length
             (fun _ ->
-                let x = randomInRange generator group.Length
-                let y = randomInRange generator group.Length
-                breed generator group.[x] group.[y])
+                breed
+                    generator
+                    (weightedRandomIndividual ())
+                    (weightedRandomIndividual ()))
     let crossed = cross generator fittest
-    let mutants = generatePopulation generator oneThird initial
-    let newPopulation =
-        Seq.append fittest crossed |> Seq.append mutants |> Seq.toArray
+    let mutants =
+        Seq.map
+            (fun result -> mutateIndividual generator result.individual)
+            fittest
+    let newPopulation = Seq.append mutants crossed |> Seq.toArray
     if generations < 1 then newPopulation
     else
         runGeneration generator (generations - 1) initial options newPopulation
