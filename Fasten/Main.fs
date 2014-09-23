@@ -94,7 +94,8 @@ let zipi<'a> : IEnumerable<'a> -> seq<int * 'a> =
     Seq.mapi pair
 
 let randomInRange (generator : Random) (range : int) : int =
-    int32 (uint32 (generator.Next ()) % uint32 range)
+    if range = 0 then 0
+    else int32 (uint32 (generator.Next ()) % uint32 range)
 
 let mapIndex (f : 'a -> 'a) (xs : 'a []) (i : int) =
     Array.concat
