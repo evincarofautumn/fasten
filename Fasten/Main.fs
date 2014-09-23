@@ -280,6 +280,7 @@ let readFile
     let fasteners = Seq.map fastenerOfGroup groups
     if Seq.isEmpty fasteners then None
     else
+        printfn "File %s contains %d fasteners." file (Seq.length fasteners)
         Some {
             path = file;
             lines = Array.ofSeq lines;
