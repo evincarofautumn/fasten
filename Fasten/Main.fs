@@ -301,6 +301,11 @@ let readDirectory
 
 let mutateValue (generator : Random) (value : Value) : Value =
     let step = randomStep generator
+    let nonZeroOrDefault i d =
+        if i = 0L then
+            d
+        else
+            i
     match value with
     | Regular i ->
         match step with
@@ -309,9 +314,9 @@ let mutateValue (generator : Random) (value : Value) : Value =
         | Up -> Regular (i + 1L)
     | PowerOfTwo i ->
         match step with
-        | Down -> PowerOfTwo (i >>> 1)
+        | Down -> PowerOfTwo (nonZeroOrDefault (i >>> 1) i)
         | Stay -> value
-        | Up -> PowerOfTwo (i <<< 1)
+        | Up -> PowerOfTwo (nonZeroOrDefault (i <<< 1) i)
     | Boolean b ->
         match step with
         | Down | Up -> Boolean (not b)
