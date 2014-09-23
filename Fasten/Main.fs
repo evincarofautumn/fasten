@@ -22,19 +22,19 @@ type Command = unit -> option<string>
 [<NoComparison>]
 [<NoEquality>]
 type CommandLineOptions = {
-    buildProcedure : option<Command>;
-    fastenableRegex : Regex;
-    fileRegex : Regex;
-    fitnessProcedure : option<Command>;
-    populationSize : int;
-    resetProcedure : option<Command>;
+    buildProcedure : option<Command>
+    fastenableRegex : Regex
+    fileRegex : Regex
+    fitnessProcedure : option<Command>
+    populationSize : int
+    resetProcedure : option<Command>
 }
 
 type Fastener = {
-    path : FilePath;
-    line : Line;
-    original : Value;
-    value : Value;
+    path : FilePath
+    line : Line
+    original : Value
+    value : Value
 }
 
 let stringOfValue (value : Value) : string =
@@ -49,13 +49,16 @@ let stringOfFastener (fastener : Fastener) : string =
     else
         sprintf
             "%s:%d: change %s to %s"
-            fastener.path fastener.line (stringOfValue fastener.original) (stringOfValue fastener.value)
+            fastener.path
+            fastener.line
+            (stringOfValue fastener.original)
+            (stringOfValue fastener.value)
 
 [<NoComparison>]
 type File = {
-    path : FilePath;
-    lines : (int * string) [];
-    fasteners : Fastener [];
+    path : FilePath
+    lines : (int * string) []
+    fasteners : Fastener []
 }
 
 type Individual = File []
@@ -64,8 +67,8 @@ type Population = Individual []
 
 [<NoComparison>]
 type ExerciseResult = {
-    individual : Individual;
-    fitness : Fitness;
+    individual : Individual
+    fitness : Fitness
 }
 
 type RandomStep =
@@ -134,8 +137,8 @@ let reportDirectoryNotFound (name : DirectoryPath) : 'a =
 let reportFailedCommand (command : string) (errors : option<string>) : 'a =
     errorfn "Command failed: %s" command
     match errors with
-        | Some errors -> errorfn "%s" errors
-        | None -> ()
+    | Some errors -> errorfn "%s" errors
+    | None -> ()
     exit 1
 
 let reportInvalidFitnessOutput (fitnessOutput : string) =
@@ -200,12 +203,12 @@ let runCommand (command : string) () : option<string> =
 (* Command-line options. *)
 
 let defaultOptions : CommandLineOptions = {
-    buildProcedure = None;
-    fastenableRegex = new Regex ("\\d+(?=\\s*/\\*\\s*(INT|POW|BOOL)\\s+FASTENABLE\\s*\\*/)");
-    fileRegex = new Regex ("\\.c|\\.h");
-    fitnessProcedure = None;
-    populationSize = 20;
-    resetProcedure = None;
+    buildProcedure = None
+    fastenableRegex = new Regex ("\\d+(?=\\s*/\\*\\s*(INT|POW|BOOL)\\s+FASTENABLE\\s*\\*/)")
+    fileRegex = new Regex ("\\.c|\\.h")
+    fitnessProcedure = None
+    populationSize = 20
+    resetProcedure = None
 }
 
 let parseCommandLineOptions
@@ -272,19 +275,19 @@ let readFile
     let fastenerOfGroup (line, group : string, ``type`` : string) =
         let value = makeValue ``type`` (System.Int64.Parse group)
         {
-            path = file;
-            line = line;
-            original = value;
-            value = value;
+            path = file
+            line = line
+            original = value
+            value = value
         }
     let fasteners = Seq.map fastenerOfGroup groups
     if Seq.isEmpty fasteners then None
     else
         printfn "File %s contains %d fasteners." file (Seq.length fasteners)
         Some {
-            path = file;
-            lines = Array.ofSeq lines;
-            fasteners = Array.ofSeq fasteners;
+            path = file
+            lines = Array.ofSeq lines
+            fasteners = Array.ofSeq fasteners
         }
 
 let readDirectory
@@ -292,9 +295,9 @@ let readDirectory
     let files =
         try Directory.GetFiles (directory, "*", SearchOption.AllDirectories)
         with
-            | :? System.IO.DirectoryNotFoundException ->
-                reportDirectoryNotFound directory
-            | e -> reportError e ("Directory: " + directory)
+        | :? System.IO.DirectoryNotFoundException ->
+            reportDirectoryNotFound directory
+        | e -> reportError e ("Directory: " + directory)
     files
         |> Seq.filter options.fileRegex.IsMatch
         |> Seq.choose (readFile options)
@@ -351,10 +354,10 @@ let exercisePopulation
                     file.fasteners
             let text =
                 match found with
-                    | Some found ->
-                        options.fastenableRegex.Replace
-                            (text, (stringOfValue found.value))
-                    | None -> text
+                | Some found ->
+                    options.fastenableRegex.Replace
+                        (text, (stringOfValue found.value))
+                | None -> text
             writer.WriteLine text
         writer.Flush ()
         writer.Close ()
@@ -368,37 +371,37 @@ let exercisePopulation
         printfn "Building."
         let buildStatus = options.buildProcedure.Value ()
         match buildStatus with
-            | Some status ->
-                printfn "Testing fitness."
-                let fitnessOutput = options.fitnessProcedure.Value ()
-                match fitnessOutput with
-                    | Some output ->
-                        try
-                            let fitness = 1.0 / System.Double.Parse output
-                            printfn "Calculated fitness: %f." fitness
-                            Some fitness
-                        with
-                            | :? System.FormatException ->
-                                printfn
-                                    "Individual produced an invalid fitness result: '%s'"
-                                    output
-                                None
-                            | e ->
-                                printfn
-                                    "Individual did not produce a fitness result:\n%s"
-                                    (e.ToString ())
-                                None
-                    | None ->
-                        printfn "Individual died during exercise. :("
-                        None
-            | None -> None
+        | Some status ->
+            printfn "Testing fitness."
+            let fitnessOutput = options.fitnessProcedure.Value ()
+            match fitnessOutput with
+            | Some output ->
+                try
+                    let fitness = 1.0 / System.Double.Parse output
+                    printfn "Calculated fitness: %f." fitness
+                    Some fitness
+                with
+                | :? System.FormatException ->
+                    printfn
+                        "Individual produced an invalid fitness result: '%s'"
+                        output
+                    None
+                | e ->
+                    printfn
+                        "Individual did not produce a fitness result:\n%s"
+                        (e.ToString ())
+                    None
+            | None ->
+                printfn "Individual died during exercise. :("
+                None
+        | None -> None
     Array.map exercise population
         |> Array.map2
-            (fun individual fitness ->
+            begin fun individual fitness ->
                 match fitness with
-                    | Some fitness ->
-                        Some { individual = individual; fitness = fitness }
-                    | None -> None)
+                | Some fitness ->
+                    Some { individual = individual; fitness = fitness }
+                | None -> None end
             population
         |> Array.choose id
 
@@ -446,8 +449,8 @@ let rec runGeneration
         let weightedRandomIndividual () =
             let position = generator.NextDouble () * sums.[sums.Length - 1]
             match Array.tryFindIndex (fun x -> position <= x) sums with
-                | Some index -> group.[index].individual
-                | None -> group.[group.Length - 1].individual
+            | Some index -> group.[index].individual
+            | None -> group.[group.Length - 1].individual
         Seq.init group.Length
             (fun _ ->
                 breed
