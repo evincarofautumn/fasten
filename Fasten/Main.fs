@@ -98,11 +98,11 @@ let randomInRange (generator : Random) (range : int) : int =
     else int32 (uint32 (generator.Next ()) % uint32 range)
 
 let mapIndex (f : 'a -> 'a) (xs : 'a []) (i : int) =
-    Array.concat
-        [ Array.sub xs 0 (max 0 (i - 1))
-        ; [|f (xs.[i])|]
-        ; Array.sub xs (i + 1) (max 0 (xs.Length - i - 1))
-        ]
+    Array.concat [
+        Array.sub xs 0 i
+        [|f xs.[i]|]
+        Array.sub xs (i + 1) (Array.length xs - i - 1)
+    ]
 
 let mapRandom (generator : Random) (f : 'a -> 'a) (xs : 'a []) : 'a [] =
     if xs.Length = 0 then xs
