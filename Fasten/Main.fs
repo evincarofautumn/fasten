@@ -12,6 +12,7 @@ type FilePath = string
 type Fitness = float
 type Length = uint32
 type Line = int
+
 type Value =
     | Regular of int64
     | PowerOfTwo of int64
@@ -19,15 +20,17 @@ type Value =
 
 type Command = unit -> option<string>
 
-[<NoComparison>]
-[<NoEquality>]
+[<NoComparison; NoEquality>]
 type CommandLineOptions = {
     buildProcedure : option<Command>
+    externalProcessTimeout : int
     fastenableRegex : Regex
     fileRegex : Regex
     fitnessProcedure : option<Command>
+    generations : int
     populationSize : int
     resetProcedure : option<Command>
+    verbose : bool
 }
 
 type Fastener = {
@@ -84,6 +87,9 @@ let randomStep (generator : Random) =
     elif value < 0.66 then Stay
     else Up
 
+let errorf (format : Printf.TextWriterFormat<'a>) : 'a =
+    fprintf stderr format
+
 let errorfn (format : Printf.TextWriterFormat<'a>) : 'a =
     fprintfn stderr format
 
@@ -122,8 +128,32 @@ let shuffleInPlace (generator : Random) (xs : 'T []) =
 (* Error reporting utilities. *)
 
 let reportUsage () : unit =
-    errorfn
-        "Usage: fasten [--files <regex>] --build <command> --fitness <command> --reset <command> <directory>..."
+    errorf
+        "Usage:\n\
+        \n\
+        \tfasten [<options>] <directories>\n\
+        \n\
+        Required:\n\
+        \n\
+        \t--build <command>\n\
+        \t\tThe command that builds the source tree (e.g., 'make').\n\
+        \n\
+        \t--fitness <command>\n\
+        \t\tThe command that computes fitness (e.g. 'bin/run-benchmark').\n\
+        \n\
+        \t--reset <command>\n\
+        \t\tThe command that resets the source tree (e.g. 'git checkout .').\n\
+        \n\
+        Optional:\n\
+        \n\
+        \t--files <regex>\n\
+        \t\tRegular expression matching file names to search.\n\
+        \n\
+        \t--generations <count>\n\
+        \t\tNumber of generations to run (default 20).\n\
+        \n\
+        \t--population <size>\n\
+        \t\tSize of a population (default 20).\n"
     exit 1
 
 let reportError (``exception`` : 'a) (message : string) : 'b =
@@ -146,12 +176,13 @@ let reportInvalidFitnessOutput (fitnessOutput : string) =
     exit 1
 
 let reportInvalidFlag (flag : string) (expected : string) : 'a =
-    errorfn  "Invalid flag %s; expected %s" flag expected
+    errorfn "Invalid flag %s; expected %s." flag expected
     exit 1
 
 (* Running external processes. *)
 
-let runCommand (command : string) () : option<string> =
+let runCommand (options : CommandLineOptions) (command : string) ()
+    : option<string> =
     try
         use mutable ``process`` = new Process ()
         (* FIXME This regex is brittle, but I didn’t want to add separate
@@ -175,9 +206,7 @@ let runCommand (command : string) () : option<string> =
                 (fun args -> error.Append(args.Data) |> ignore)
             ``process``.BeginErrorReadLine ()
             ``process``.BeginOutputReadLine ()
-            (* FIXME: Put with other configuration. *)
-            let timeout = 60 * 1000
-            if ``process``.WaitForExit timeout then
+            if ``process``.WaitForExit options.externalProcessTimeout then
                 printfn "Output: %s" (output.ToString ())
                 printfn "Errors: %s" (error.ToString ())
                 if ``process``.ExitCode = 0 then
@@ -204,52 +233,70 @@ let runCommand (command : string) () : option<string> =
 
 let defaultOptions : CommandLineOptions = {
     buildProcedure = None
+    externalProcessTimeout = 60 * 1000
     fastenableRegex = new Regex ("\\d+(?=\\s*/\\*\\s*(INT|POW|BOOL)\\s+FASTENABLE\\s*\\*/)")
     fileRegex = new Regex ("\\.c|\\.h")
     fitnessProcedure = None
+    generations = 20
     populationSize = 20
     resetProcedure = None
+    verbose = false
 }
 
 let parseCommandLineOptions
     : string list -> CommandLineOptions * string list =
     let rec
-        go = fun ((options, unused) as acc) -> function
-            | "--build" :: command :: rest ->
-                go
-                    ( { options
-                        with buildProcedure = Some (runCommand command) }
-                    , unused
-                    )
-                    rest
-            | "--build" :: [] ->
-                reportInvalidFlag "--build" "<command>"
-            | "--files" :: pattern :: rest ->
-                go
-                    ({ options with fileRegex = new Regex (pattern) }, unused)
-                    rest
-            | "--files" :: [] -> reportInvalidFlag "--files" "<regex>"
-            | "--fitness" :: command :: rest ->
-                go
-                    ( { options
-                        with fitnessProcedure = Some (runCommand command) }
-                    , unused
-                    )
-                    rest
-            | "--fitness" :: [] ->
-                reportInvalidFlag "--fitness" "<command>"
-            | "--reset" :: command :: rest ->
-                go
-                    ( { options
-                        with resetProcedure = Some (runCommand command) }
-                    , unused
-                    )
-                    rest
-            | "--reset" :: [] ->
-                reportInvalidFlag "--reset" "<command>"
-            | x :: rest ->
-                go (options, x :: unused) rest
-            | [] -> acc
+        go =
+            fun ((options, unused) as acc) ->
+                let proceed x y = go (x, unused) y in function
+                | "--build" :: command :: rest ->
+                    proceed
+                        { options with buildProcedure = Some (runCommand options command) }
+                        rest
+                | "--build" :: [] ->
+                    reportInvalidFlag "--build" "<command>"
+                | "--files" :: pattern :: rest ->
+                    proceed
+                        { options with fileRegex = new Regex (pattern) }
+                        rest
+                | "--files" :: [] -> reportInvalidFlag "--files" "<regex>"
+                | "--fitness" :: command :: rest ->
+                    proceed
+                        { options with fitnessProcedure = Some (runCommand options command) }
+                        rest
+                | "--fitness" :: [] ->
+                    reportInvalidFlag "--fitness" "<command>"
+                | "--generations" :: size :: rest ->
+                    proceed
+                        { options with generations = System.Int32.Parse size }
+                        rest
+                | "--generations" :: [] ->
+                    reportInvalidFlag "--generations" "<count>"
+                | "--population" :: size :: rest ->
+                    proceed
+                        { options with populationSize = System.Int32.Parse size }
+                        rest
+                | "--population" :: [] ->
+                    reportInvalidFlag "--population" "<size>"
+                | "--reset" :: command :: rest ->
+                    proceed
+                        { options with resetProcedure = Some (runCommand options command) }
+                        rest
+                | "--reset" :: [] ->
+                    reportInvalidFlag "--reset" "<command>"
+                | "--timeout" :: milliseconds :: rest ->
+                    proceed
+                        { options with externalProcessTimeout = System.Int32.Parse milliseconds }
+                        rest
+                | "--timeout" :: [] ->
+                    reportInvalidFlag "--timeout" "<milliseconds>"
+                | "--verbose" :: rest ->
+                    proceed
+                        { options with verbose = true }
+                        rest
+                | x :: rest ->
+                    go (options, x :: unused) rest
+                | [] -> acc
     go (defaultOptions, [])
 
 (* Reading. *)
@@ -487,9 +534,17 @@ let main (argv : string []) : int =
         assumed to be reasonably fit already. *)
     printfn "Computing initial population."
     let initialPopulation =
-        generatePopulation generator options.populationSize initialIndividual
+        generatePopulation
+            generator
+            options.populationSize
+            initialIndividual
     let finalPopulation =
-        runGeneration generator 5 initialIndividual options initialPopulation
+        runGeneration
+            generator
+            options.generations
+            initialIndividual
+            options
+            initialPopulation
     finalPopulation
         |> Array.map
             (Array.map
