@@ -9,6 +9,7 @@
 int
 main (void)
 {
+	assert (A > 7);
 	assert (B == 0 || B == 1);
 	assert (C && !(C & (C-1)));
 	printf ("%f\n", fabs ((A-5.5)*(B+0.1)*(C-2.5)));
