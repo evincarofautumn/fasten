@@ -445,12 +445,12 @@ let exercisePopulation
     Array.map exercise population
         |> Array.map2
             begin fun individual fitness ->
-                match fitness with
-                | Some fitness ->
-                    Some { individual = individual; fitness = fitness }
-                | None -> None end
+                let fitness = match fitness with
+                              | Some f -> f
+                              | None -> 0.0
+                { individual = individual; fitness = fitness }
+            end
             population
-        |> Array.choose id
 
 (* Generating and running generations. *)
 
