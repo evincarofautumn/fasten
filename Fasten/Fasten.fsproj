@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
@@ -39,7 +39,20 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="AssemblyInfo.fs" />
+    <Compile Include="Util.fs">
+    </Compile>
+    <Compile Include="Types.fs" />
+    <Compile Include="Report.fs">
+    </Compile>
+    <Compile Include="Options.fs" />
+    <Compile Include="Mutate.fs" />
+    <Compile Include="Read.fs" />
+    <Compile Include="Exercise.fs" />
+    <Compile Include="Generation.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\..\Microsoft SDKs\F#\3.1\Framework\v4.0\Microsoft.FSharp.Targets" />
+  <ItemGroup>
+    <Folder Include="Fasten\" />
+  </ItemGroup>
 </Project>
