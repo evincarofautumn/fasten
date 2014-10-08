@@ -57,8 +57,8 @@ module Options =
                 ``process``.BeginErrorReadLine ()
                 ``process``.BeginOutputReadLine ()
                 if ``process``.WaitForExit options.externalProcessTimeout then
-                    printfn "Output: %s" (output.ToString ())
-                    printfn "Errors: %s" (error.ToString ())
+                    printfn "Standard Output:\n%s" (output.ToString ())
+                    printfn "Standard Error:\n%s" (error.ToString ())
                     if ``process``.ExitCode = 0 then
                         Some (output.ToString ())
                     else
