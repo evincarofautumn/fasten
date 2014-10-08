@@ -10,10 +10,15 @@ fitness function.
 
 ### Annotating Source
 
-Integers followed by `/* FASTENABLE */` are enabled for optimisation:
+Integers followed by `/* TYPE FASTENABLE */` are enabled for optimization, where
+`TYPE` is one of:
+
+ * `BOOL`: a boolean (`0` or `1`) to toggle
+ * `INT`: an integer to increment or decrement
+ * `POW`: a power of two to double or halve
 
 ```
-#define BUFFER_SIZE 128 /* FASTENABLE */
+#define BUFFER_SIZE 128 /* POW FASTENABLE */
 ```
 
 ### Testing Fitness
@@ -42,6 +47,8 @@ fasten \
   --fitness "fitness.sh" \
   /path/to/project
 ```
+
+See `--help` for full usage.
 
 ## Interpreting Output
 

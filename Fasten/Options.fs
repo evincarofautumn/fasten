@@ -107,6 +107,8 @@ module Options =
                         rest
                 | "--generations" :: [] ->
                     Report.invalidFlag "--generations" "<count>"
+                | "--help" :: _ ->
+                    Report.usage ()
                 | "--population" :: size :: rest ->
                     proceed
                         { options with populationSize = System.Int32.Parse size }

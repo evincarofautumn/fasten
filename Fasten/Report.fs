@@ -4,13 +4,13 @@ module Report =
     open Fasten.Types
     open Fasten.Util
 
-    let usage () : unit =
+    let usage () : 'a =
         errorf
             "Usage:\n\
             \n\
             \tfasten [<options>] <directories>\n\
             \n\
-            Required:\n\
+            Required Parameters:\n\
             \n\
             \t--build <command>\n\
             \t\tThe command that builds the source tree (e.g., 'make').\n\
@@ -21,13 +21,16 @@ module Report =
             \t--reset <command>\n\
             \t\tThe command that resets the source tree (e.g. 'git checkout .').\n\
             \n\
-            Optional:\n\
+            Optional Parameters:\n\
             \n\
             \t--files <regex>\n\
             \t\tRegular expression matching file names to search.\n\
             \n\
             \t--generations <count>\n\
             \t\tNumber of generations to run (default 20).\n\
+            \n\
+            \t--help\n\
+            \t\tPrint this help message.\n\
             \n\
             \t--population <size>\n\
             \t\tSize of a population (default 20).\n"
