@@ -33,7 +33,10 @@ module Report =
             \t\tPrint this help message.\n\
             \n\
             \t--population <size>\n\
-            \t\tSize of a population (default 20).\n"
+            \t\tSize of a population (default 20).\n\
+            \n\
+            \t--timeout <milliseconds>\n\
+            \t\tThe amount of time to wait for external processes before killing them.\n"
         exit 1
 
     let error (``exception`` : 'a) (message : string) : 'b =
