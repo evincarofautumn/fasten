@@ -40,3 +40,10 @@ module Mutate =
 
     let individual (generator : Random) =
         mapRandom generator (file generator)
+
+    let randomFile (generator : Random) (file : File) : File =
+        { file with
+            fasteners = Array.map (fastener generator) file.fasteners }
+
+    let randomIndividual (generator : Random) (individual : Individual) : Individual =
+        Array.map (randomFile generator) individual

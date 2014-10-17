@@ -17,9 +17,8 @@ let main (argv : string []) : int =
         List.map (Read.directory options) directories
             |> Seq.concat |> Array.ofSeq
     let generator = new Random ()
-    (* Since we only have one example individual—the initial source tree—we
-        generate an initial population by mutating the original, which is
-        assumed to be reasonably fit already. *)
+    (* We generate an initial population by mutating each fastener
+       in the original individual for each new individual. *)
     printfn "Computing initial population."
     let initialPopulation =
         Generation.make

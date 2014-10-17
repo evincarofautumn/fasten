@@ -11,7 +11,7 @@ module Generation =
         (generator : Random) (size : int) (individual : Individual)
         : Population =
         Seq.init size
-            (fun _ -> Mutate.individual generator individual)
+            (fun _ -> Mutate.randomIndividual generator individual)
             |> Array.ofSeq
 
     let rec run
